@@ -150,33 +150,40 @@ if uploaded and ((sell_file or buy_file) and (bank_biz_file or bank_tg_file)):
     else:
         invoice_df["매칭결과"] = "❌ 미일치"
 
-    # 필터
-    st.sidebar.header("🔍 검색 필터")
-    filter_match = st.sidebar.multiselect("매칭 결과 필터", options=invoice_df["매칭결과"].unique(), default=list(invoice_df["매칭결과"].unique()))
-    filter_vendor = st.sidebar.text_input("거래처명 검색")
+   # 필터
+st.sidebar.header("🔍 검색 필터")
+filter_match = st.sidebar.multiselect("매칭 결과 필터", options=invoice_df["매칭결과"].unique(), default=list(invoice_df["매칭결과"].unique()))
+filter_vendor = st.sidebar.text_input("거래처명 검색")
 
-    filtered_df = invoice_df[invoice_df["매칭결과"].isin(filter_match)]
-    if filter_vendor:
-        filtered_df = filtered_df[filtered_df["공급받는자 상호"].str.contains(filter_vendor, case=False, na=False)]
+filtered_df = invoice_df[invoice_df["매칭결과"].isin(filter_match)]
+if filter_vendor:
+    filtered_df = filtered_df[filtered_df["공급받는자 상호"].str.contains(filter_vendor, case=False, na=False)]
 
-    st.subheader("📑 세금계산서 매칭 결과")
-    st.dataframe(filtered_df, use_container_width=True)
+st.subheader("📑 세금계산서 매칭 결과")
+st.dataframe(filtered_df, use_container_width=True)
 
-    st.markdown("### 📌 매칭 통계")
-    st.write(filtered_df["매칭결과"].value_counts())
+st.markdown("### 📌 매칭 통계")
+st.write(filtered_df["매칭결과"].value_counts())
 
-    st.markdown("### 📈 월별 매출 추이")
-    filtered_df["월"] = filtered_df["작성일자"].dt.to_period("M").astype(str)
-    monthly_sum = filtered_df.groupby("월")["합계금액"].sum().reset_index()
-    fig = px.bar(monthly_sum, x="월", y="합계금액", text="합계금액", title="월별 세금계산서 합계")
-    st.plotly_chart(fig, use_container_width=True)
+st.markdown("### 📈 월별 매출 추이")
+if "작성일자" in filtered_df.columns:
+    try:
+        filtered_df["월"] = pd.to_datetime(filtered_df["작성일자"], errors="coerce").dt.to_period("M").astype(str)
+        monthly_sum = filtered_df.groupby("월")["합계금액"].sum().reset_index()
+        fig = px.bar(monthly_sum, x="월", y="합계금액", text="합계금액", title="월별 세금계산서 합계")
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.warning(f"📉 월별 추이 표시 중 오류 발생: {e}")
+else:
+    st.warning("📅 '작성일자' 열이 없어 월별 매출 추이를 계산할 수 없습니다.")
 
-    csv = filtered_df.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("📥 결과 CSV 다운로드", data=csv, file_name="매칭결과.csv", mime="text/csv")
+# 다운로드
+csv = filtered_df.to_csv(index=False).encode("utf-8-sig")
+st.download_button("📥 결과 CSV 다운로드", data=csv, file_name="매칭결과.csv", mime="text/csv")
 
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        filtered_df.to_excel(writer, index=False, sheet_name="매칭결과")
-    st.download_button("📥 결과 Excel 다운로드", data=output.getvalue(), file_name="매칭결과.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+output = io.BytesIO()
+with pd.ExcelWriter(output, engine="openpyxl") as writer:
+    filtered_df.to_excel(writer, index=False, sheet_name="매칭결과")
+st.download_button("📥 결과 Excel 다운로드", data=output.getvalue(), file_name="매칭결과.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 else:
     st.info("왼쪽 사이드바에서 세금계산서와 통장 거래내역 중 최소 1개씩 업로드한 후 '📤 업로드 완료' 버튼을 눌러주세요.")
