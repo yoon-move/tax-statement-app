@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from io import StringIO
-from datetime import datetime
 import plotly.express as px
 import io
 
@@ -48,7 +46,6 @@ def load_bank_file(file, label):
         if ext == "csv":
             df = pd.read_csv(file, dtype=str)
         else:
-            # '거래일자' 또는 '거래일시' 열이 있는 헤더를 자동 탐지
             for skip in range(0, 15):
                 df_try = pd.read_excel(file, skiprows=skip, engine="openpyxl", dtype=str)
                 df_try.columns = df_try.columns.str.strip()
@@ -56,59 +53,84 @@ def load_bank_file(file, label):
                     df = df_try
                     break
             else:
-                st.warning(f"[{label}] 파일에 '거래일자' 또는 '거래일시' 열이 포함된 유효한 헤더를 찾을 수 없습니다.")
+                st.warning(f"[{label}] 유효한 헤더를 찾을 수 없습니다.")
                 return pd.DataFrame()
 
-        # 컬럼명 매핑
         df.columns = df.columns.str.strip()
-        column_map = {
+        df.rename(columns={
             "거래일시": "거래일자",
             "보낸분/받는분": "거래처명",
-            "입금액(원)": "입금액"
-        }
-        df.rename(columns=column_map, inplace=True)
+            "입금액(원)": "입금액",
+            "출금액(원)": "출금액"
+        }, inplace=True)
 
-        # 필수 컬럼 확인
-        required_cols = ['거래일자', '거래처명', '입금액']
-        missing_cols = [col for col in required_cols if col not in df.columns]
-        if missing_cols:
-            st.warning(f"[{label}] 파일에 다음 필수 열이 없습니다: {missing_cols}. 첫 5개 열: {list(df.columns[:5])}")
+        if not {'거래일자', '거래처명'}.issubset(df.columns):
+            st.warning(f"[{label}] 필수 열이 누락되었습니다.")
             return pd.DataFrame()
 
-        # 컬럼 정리 및 변환
-        df = df[required_cols].copy()
-        df['계좌구분'] = label
+        if '입금액' in df.columns and df['입금액'].astype(str).str.replace("0", "").str.strip().any():
+            df['거래금액'] = pd.to_numeric(df['입금액'], errors='coerce')
+        elif '출금액' in df.columns:
+            df['거래금액'] = -1 * pd.to_numeric(df['출금액'], errors='coerce')
+        else:
+            st.warning(f"[{label}] 유효한 금액 열이 없습니다.")
+            return pd.DataFrame()
+
         df['거래일자'] = pd.to_datetime(df['거래일자'], errors='coerce')
-        df['입금액'] = pd.to_numeric(df['입금액'], errors='coerce')
-        return df
+        df['계좌구분'] = label
+        return df[['거래일자', '거래처명', '거래금액', '계좌구분']]
 
     except Exception as e:
         st.error(f"{label} 통장 불러오기 오류: {e}")
         return pd.DataFrame()
 
-
-
-
-def load_invoice_data(file, label):
+def fast_load_invoice(file, label):
     try:
         xl = pd.ExcelFile(file)
-        for i in range(5, 20):
-            df = pd.read_excel(xl, sheet_name="세금계산서", header=i)
-            if "작성일자" in df.columns and "공급가액" in df.columns and "상호.1" in df.columns:
-                df = df[["작성일자", "공급자사업자등록번호", "상호", "대표자명", "공급받는자사업자등록번호", "상호.1", "공급가액", "세액", "합계금액"]].copy()
-                df.columns = ["작성일자", "공급자사업자등록번호", "공급자 상호", "공급자 대표자명", "공급받는자사업자등록번호", "공급받는자 상호", "공급가액", "세액", "합계금액"]
+        for i in range(5, 16):
+            df = pd.read_excel(xl, sheet_name="세금계산서", header=i, engine="openpyxl")
+            if {"작성일자", "공급가액", "상호.1"}.issubset(df.columns):
+                df = df[["작성일자", "공급자사업자등록번호", "상호", "대표자명",
+                         "공급받는자사업자등록번호", "상호.1", "공급가액", "세액", "합계금액"]].copy()
+                df.columns = ["작성일자", "공급자사업자등록번호", "공급자 상호", "공급자 대표자명",
+                              "공급받는자사업자등록번호", "공급받는자 상호", "공급가액", "세액", "합계금액"]
                 df["구분"] = label
                 return df
     except Exception as e:
         st.warning(f"{label} 세금계산서 불러오기 실패: {e}")
     return pd.DataFrame()
 
+def match_rows(inv, bank):
+    results = []
+    inv = inv.copy()
+    bank = bank.copy()
+    inv['작성일자'] = pd.to_datetime(inv['작성일자'], errors='coerce')
+    bank['거래일자'] = pd.to_datetime(bank['거래일자'], errors='coerce')
+
+    for _, row in inv.iterrows():
+        match = bank[
+            (bank['거래처명'] == row['공급받는자 상호']) &
+            (np.abs((bank['거래일자'] - row['작성일자']).dt.days) <= 1) &
+            (bank['거래금액'] == row['합계금액'])
+        ]
+        if not match.empty:
+            results.append("✅ 일치")
+        else:
+            partial = bank[
+                (bank['거래처명'] == row['공급받는자 상호']) &
+                (np.abs((bank['거래일자'] - row['작성일자']).dt.days) <= 3)
+            ]
+            if not partial.empty:
+                results.append("⚠️ 일부일치")
+            else:
+                results.append("❌ 미일치")
+    return results
+
 if uploaded and ((sell_file or buy_file) and (bank_biz_file or bank_tg_file)):
-    sell_df = load_invoice_data(sell_file, "매출") if sell_file else pd.DataFrame()
-    buy_df = load_invoice_data(buy_file, "매입") if buy_file else pd.DataFrame()
+    sell_df = fast_load_invoice(sell_file, "매출") if sell_file else pd.DataFrame()
+    buy_df = fast_load_invoice(buy_file, "매입") if buy_file else pd.DataFrame()
     invoice_df = pd.concat([sell_df, buy_df], ignore_index=True)
 
-    # --- 내부거래 제거 ---
     mask = (
         invoice_df["공급자사업자등록번호"].astype(str).str.contains("447-87-03172", na=False) |
         invoice_df["공급받는자사업자등록번호"].astype(str).str.contains("447-87-03172", na=False) |
@@ -117,39 +139,22 @@ if uploaded and ((sell_file or buy_file) and (bank_biz_file or bank_tg_file)):
         invoice_df["공급자 대표자명"].astype(str).str.contains("윤영범", na=False)
     )
     invoice_df = invoice_df[~mask].copy()
-    invoice_df["작성일자"] = pd.to_datetime(invoice_df["작성일자"], errors="coerce")
 
-    bank_biz_df = load_bank_file(bank_biz_file, "사업자통장") if bank_biz_file else pd.DataFrame()
-    bank_tg_df = load_bank_file(bank_tg_file, "기보통장") if bank_tg_file else pd.DataFrame()
-    bank_df = pd.concat([bank_biz_df, bank_tg_df], ignore_index=True)
+    bank_df = pd.concat([
+        load_bank_file(bank_biz_file, "사업자통장") if bank_biz_file else pd.DataFrame(),
+        load_bank_file(bank_tg_file, "기보통장") if bank_tg_file else pd.DataFrame()
+    ], ignore_index=True)
 
-    def match_rows(inv, bank):
-        results = []
-        for _, row in inv.iterrows():
-            matched = bank[
-                (bank["거래처명"] == row["공급받는자 상호"]) &
-                (np.abs((bank["거래일자"] - row["작성일자"]).dt.days) <= 1) &
-                (bank["입금액"] == row["합계금액"])
-            ]
-            if not matched.empty:
-                results.append("✅ 일치")
-            else:
-                partial = bank[
-                    (bank["거래처명"] == row["공급받는자 상호"]) &
-                    (np.abs((bank["거래일자"] - row["작성일자"]).dt.days) <= 3)
-                ]
-                if not partial.empty:
-                    results.append("⚠️ 일부일치")
-                else:
-                    results.append("❌ 미일치")
-        return results
+    if not invoice_df.empty and not bank_df.empty:
+        invoice_df["매칭결과"] = match_rows(invoice_df, bank_df)
+    else:
+        invoice_df["매칭결과"] = "❌ 미일치"
 
-    invoice_df["매칭결과"] = match_rows(invoice_df, bank_df)
-
-    # --- 필터 ---
+    # 필터
     st.sidebar.header("🔍 검색 필터")
-    filter_match = st.sidebar.multiselect("매칭 결과 필터", options=invoice_df["매칭결과"].unique(), default=invoice_df["매칭결과"].unique())
+    filter_match = st.sidebar.multiselect("매칭 결과 필터", options=invoice_df["매칭결과"].unique(), default=list(invoice_df["매칭결과"].unique()))
     filter_vendor = st.sidebar.text_input("거래처명 검색")
+
     filtered_df = invoice_df[invoice_df["매칭결과"].isin(filter_match)]
     if filter_vendor:
         filtered_df = filtered_df[filtered_df["공급받는자 상호"].str.contains(filter_vendor, case=False, na=False)]
@@ -172,11 +177,6 @@ if uploaded and ((sell_file or buy_file) and (bank_biz_file or bank_tg_file)):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         filtered_df.to_excel(writer, index=False, sheet_name="매칭결과")
-    st.download_button(
-        label="📥 결과 Excel 다운로드",
-        data=output.getvalue(),
-        file_name="매칭결과.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    st.download_button("📥 결과 Excel 다운로드", data=output.getvalue(), file_name="매칭결과.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 else:
     st.info("왼쪽 사이드바에서 세금계산서와 통장 거래내역 중 최소 1개씩 업로드한 후 '📤 업로드 완료' 버튼을 눌러주세요.")
