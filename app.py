@@ -1,142 +1,129 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime
 import plotly.express as px
 import io
+from datetime import datetime
 
-st.set_page_config(page_title="세금계산서 & 은행거래 비교", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="세금계산서 & 통장 매칭", layout="wide", initial_sidebar_state="expanded")
 
-st.markdown("""
-    <style>
-    .stFileUploader > label div:first-child {
-        background-color: #fff3e0;
-        border: 1px dashed #ff9800;
-        padding: 12px;
-        transition: background-color 0.3s;
-        color: black !important;
-        font-weight: 500;
-    }
-    .stFileUploader > label div:first-child:hover {
-        background-color: #ffe0b2 !important;
-    }
-    .stFileUploader .uploadedFileName {
-        color: black !important;
-    }
-    .stFileUploader input[type="file"]::file-selector-button {
-        color: black;
-    }
-    </style>
-""", unsafe_allow_html=True)
+st.title("📊 세금계산서 & 통장 거래내역 자동 정산")
+st.markdown("업로드된 세금계산서와 거래내역 데이터를 자동으로 정산합니다.")
 
-st.title("📊 세금계산서 & 은행 계좌 내역 통합관리")
-st.markdown("세금계산서와 은행 거래내역 파일을 업로드하여 거래 일치 여부를 분석합니다.")
-
-# --- 파일 업로드 영역 ---
+# --- 파일 업로드 ---
 st.sidebar.header("📂 파일 업로드")
-sell_file = st.sidebar.file_uploader("💼 매출 세금계산서 업로드 (엑셀 파일 .xlsx)", type=["xlsx"])
-buy_file = st.sidebar.file_uploader("🧾 매입 세금계산서 업로드 (엑셀 파일 .xlsx)", type=["xlsx"])
-bank_biz_file = st.sidebar.file_uploader("🏦 사업자 통장 거래내역 업로드 (.xlsx)", type=["xls", "xlsx"])
-bank_tg_file = st.sidebar.file_uploader("🏛️ 기보 통장 거래내역 업로드 (.xlsx)", type=["xls", "xlsx"])
-
+sell_file = st.sidebar.file_uploader("💼 매출 세금계산서 (.xlsx)", type=["xlsx"])
+buy_file = st.sidebar.file_uploader("🧾 매입 세금계산서 (.xlsx)", type=["xlsx"])
+bank_biz_file = st.sidebar.file_uploader("🏦 사업자 통장 거래내역 (.xlsx)", type=["xls", "xlsx"])
+bank_tg_file = st.sidebar.file_uploader("🏛️ 기보 통장 거래내역 (.xlsx)", type=["xls", "xlsx"])
 uploaded = st.button("📤 업로드 완료", type="primary")
 
-# 이름 정규화 함수
-def normalize(name):
-    if pd.isna(name):
-        return ""
-    return (
-        str(name)
-        .lower()
-        .replace("(주)", "")
-        .replace("주식회사", "")
-        .replace("(", "")
-        .replace(")", "")
-        .replace(" ", "")
-        .strip()
-    )
-
-# 세금계산서 불러오기
+# --- 파일 로딩 함수 ---
 def load_invoice(file, label):
     try:
-        df = pd.read_excel(file, sheet_name="세금계산서", header=5)
-        df = df[df["합계금액"] > 0].copy()
+        df = pd.read_excel(file, skiprows=6)
+        df = df[df.columns[df.columns.str.contains("작성일자") | df.columns.str.contains("상호") | df.columns.str.contains("합계금액")]]
+        df.columns = df.columns.str.strip()
+        df = df.rename(columns=lambda x: x.replace(" ", ""))
+        df["작성일자"] = pd.to_datetime(df["작성일자"], errors="coerce").dt.date
+        df["합계금액"] = pd.to_numeric(df["합계금액"], errors="coerce")
         df["구분"] = label
-        df["작성일자"] = pd.to_datetime(df["작성일자"], errors="coerce")
-        df["정규이름"] = df["상호"].apply(normalize)
-        df["대표자명"] = df["대표자명"].fillna("")
-        return df
+        df = df.rename(columns={col: "거래처명" for col in df.columns if "상호" in col})
+        return df[["작성일자", "거래처명", "합계금액", "구분"]]
     except Exception as e:
-        st.error(f"{label} 세금계산서 불러오기 실패: {e}")
+        st.warning(f"{label} 세금계산서 불러오기 오류: {e}")
         return pd.DataFrame()
 
-# 통장 불러오기
 def load_bank(file, label):
     try:
         df = pd.read_excel(file, skiprows=6)
-        df = df.rename(columns={
-            "거래일시": "거래일자",
-            "보낸분/받는분": "거래처명",
-            "입금액(원)": "입금액",
-            "출금액(원)": "출금액"
-        })
-        df["거래일자"] = pd.to_datetime(df["거래일자"], errors="coerce")
-        df["입금액"] = pd.to_numeric(df["입금액"], errors="coerce")
-        df["출금액"] = pd.to_numeric(df["출금액"], errors="coerce")
-        df["거래금액"] = df["입금액"].fillna(0) - df["출금액"].fillna(0)
-        df["정규이름"] = df["거래처명"].apply(normalize)
+        df.columns = df.columns.str.strip()
+        df = df.rename(columns={"보낸분/받는분": "거래처명"})
+        df["거래일자"] = pd.to_datetime(df["거래일시"], errors="coerce").dt.date
+        df["입금액"] = pd.to_numeric(df.get("입금액(원)", 0), errors="coerce").fillna(0)
+        df["출금액"] = pd.to_numeric(df.get("출금액(원)", 0), errors="coerce").fillna(0)
+        df["거래금액"] = df["입금액"] - df["출금액"]
         df["계좌구분"] = label
-        return df[["거래일자", "거래처명", "거래금액", "정규이름", "계좌구분"]]
+        return df[["거래일자", "거래처명", "거래금액", "계좌구분"]]
     except Exception as e:
-        st.error(f"{label} 통장 불러오기 실패: {e}")
+        st.warning(f"{label} 통장 불러오기 오류: {e}")
         return pd.DataFrame()
 
-# --- 본처리 ---
-if uploaded and ((sell_file or buy_file) and (bank_biz_file or bank_tg_file)):
+# --- 정규화 함수 ---
+def normalize(name):
+    if not isinstance(name, str):
+        return ""
+    name = name.strip().replace("(주)", "").replace("주식회사", "").replace("농업회사법인", "").replace("종합상사", "")
+    for exc in ["네이버", "네이버파이낸셜"]:
+        if name.strip() == exc:
+            return exc
+    return name.replace(" ", "").lower()
 
-    # 세금계산서 로딩
-    df_invoice = pd.DataFrame()
-    if sell_file:
-        df_invoice = pd.concat([df_invoice, load_invoice(sell_file, "매출")], ignore_index=True)
-    if buy_file:
-        df_invoice = pd.concat([df_invoice, load_invoice(buy_file, "매입")], ignore_index=True)
+# --- 실행 ---
+if uploaded and (sell_file or buy_file) and (bank_biz_file or bank_tg_file):
+    invoice_df = pd.concat([
+        load_invoice(sell_file, "매출") if sell_file else pd.DataFrame(),
+        load_invoice(buy_file, "매입") if buy_file else pd.DataFrame()
+    ], ignore_index=True)
 
-    # 통장 로딩
-    df_bank = pd.DataFrame()
-    if bank_biz_file:
-        df_bank = pd.concat([df_bank, load_bank(bank_biz_file, "사업자통장")], ignore_index=True)
-    if bank_tg_file:
-        df_bank = pd.concat([df_bank, load_bank(bank_tg_file, "기보통장")], ignore_index=True)
+    bank_df = pd.concat([
+        load_bank(bank_biz_file, "사업자통장") if bank_biz_file else pd.DataFrame(),
+        load_bank(bank_tg_file, "기보통장") if bank_tg_file else pd.DataFrame()
+    ], ignore_index=True)
 
-    # 매칭 수행
-    match_results = []
-    for _, row in df_invoice.iterrows():
-        date_range = pd.date_range(row["작성일자"] - pd.Timedelta(days=1), row["작성일자"] + pd.Timedelta(days=1))
-        candidates = df_bank[(df_bank["정규이름"] == row["정규이름"]) & (df_bank["거래일자"].isin(date_range))]
+    invoice_df["정규화거래처명"] = invoice_df["거래처명"].apply(normalize)
+    bank_df["정규화거래처명"] = bank_df["거래처명"].apply(normalize)
 
-        if not candidates[candidates["거래금액"] == row["합계금액"]].empty:
-            match_results.append("✅ 일치")
-        elif not candidates.empty:
-            match_results.append("⚠️ 일부일치")
-        else:
-            match_results.append("❌ 미일치")
+    # ✅ 집계
+    inv_sum = invoice_df.groupby("정규화거래처명")["합계금액"].sum().reset_index()
+    inv_sum.columns = ["정규화거래처명", "세금계산서_합계"]
 
-    df_invoice["매칭결과"] = match_results
+    bank_sum = bank_df.groupby("정규화거래처명")["거래금액"].sum().reset_index()
+    bank_sum.columns = ["정규화거래처명", "거래내역_합계"]
 
-    # 결과 출력
-    st.subheader("📑 매칭 결과")
-    st.dataframe(df_invoice[["작성일자", "상호", "대표자명", "합계금액", "구분", "매칭결과"]], use_container_width=True)
+    summary = pd.merge(inv_sum, bank_sum, on="정규화거래처명", how="inner")
+    summary["차이"] = summary["세금계산서_합계"] - summary["거래내역_합계"]
+    summary["정산결과"] = summary["차이"].apply(lambda x: "✅ 일치" if abs(x) < 1000 else "❌ 미일치")
 
-    # 통계
-    st.markdown("### 📈 월별 매출 추이")
-    df_invoice["월"] = df_invoice["작성일자"].dt.to_period("M").astype(str)
-    monthly_sum = df_invoice.groupby("월")["합계금액"].sum().reset_index()
-    fig = px.bar(monthly_sum, x="월", y="합계금액", text="합계금액", title="월별 세금계산서 합계")
-    st.plotly_chart(fig, use_container_width=True)
+    summary["세금계산서_합계"] = summary["세금계산서_합계"].map("{:,.0f}원".format)
+    summary["거래내역_합계"] = summary["거래내역_합계"].map("{:,.0f}원".format)
+    summary["차이"] = summary["차이"].map("{:,.0f}원".format)
 
-    # 다운로드
-    csv = df_invoice.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("📥 결과 CSV 다운로드", data=csv, file_name="매칭결과.csv", mime="text/csv")
+    st.subheader("📑 거래처별 정산 결과")
+    st.dataframe(summary, use_container_width=True)
 
-else:
-    st.info("왼쪽 사이드바에서 세금계산서와 통장 거래내역 중 최소 1개씩 업로드한 후 '📤 업로드 완료' 버튼을 눌러주세요.")
+    # -----------------------------
+    # 🛠️ 수동 거래처 매칭 보정 기능
+    # -----------------------------
+
+    st.subheader("🛠️ 수동 거래처 매칭 보정")
+
+    unmatched_invoices = invoice_df["거래처명"].dropna().unique().tolist()
+    unmatched_banks = bank_df["거래처명"].dropna().unique().tolist()
+
+    selected_invoice = st.selectbox("📤 세금계산서 거래처명 선택", [""] + unmatched_invoices, key="invoice_select")
+    selected_bank = st.selectbox("🏦 통장 거래처명 선택", [""] + unmatched_banks, key="bank_select")
+
+    if st.button("✅ 수동 매칭 적용", key="apply_manual_match") and selected_invoice and selected_bank:
+        corrected_name = f"수정:{selected_invoice.strip()}=={selected_bank.strip()}"
+        invoice_df.loc[invoice_df["거래처명"] == selected_invoice, "정규화거래처명"] = corrected_name
+        bank_df.loc[bank_df["거래처명"] == selected_bank, "정규화거래처명"] = corrected_name
+
+        st.success(f"✅ '{selected_invoice}' 와(과) '{selected_bank}' 을(를) 수동으로 연결했습니다.")
+
+        inv_sum = invoice_df.groupby("정규화거래처명")["합계금액"].sum().reset_index()
+        inv_sum.columns = ["정규화거래처명", "세금계산서_합계"]
+
+        bank_sum = bank_df.groupby("정규화거래처명")["거래금액"].sum().reset_index()
+        bank_sum.columns = ["정규화거래처명", "거래내역_합계"]
+
+        corrected_summary = pd.merge(inv_sum, bank_sum, on="정규화거래처명", how="inner")
+        corrected_summary["차이"] = corrected_summary["세금계산서_합계"] - corrected_summary["거래내역_합계"]
+        corrected_summary["정산결과"] = corrected_summary["차이"].apply(lambda x: "✅ 일치" if abs(x) < 1000 else "❌ 미일치")
+
+        corrected_summary["세금계산서_합계"] = corrected_summary["세금계산서_합계"].map("{:,.0f}원".format)
+        corrected_summary["거래내역_합계"] = corrected_summary["거래내역_합계"].map("{:,.0f}원".format)
+        corrected_summary["차이"] = corrected_summary["차이"].map("{:,.0f}원".format)
+
+        st.markdown("### 🔁 수동 보정 반영된 정산 결과")
+        st.dataframe(corrected_summary, use_container_width=True)
