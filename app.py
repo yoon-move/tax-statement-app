@@ -4,9 +4,6 @@ import numpy as np
 from io import StringIO
 from datetime import datetime
 import plotly.express as px
-from fpdf import FPDF
-import tempfile
-import os
 import io
 
 st.set_page_config(page_title="세금계산서 & 은행거래 비교", layout="wide", initial_sidebar_state="expanded")
@@ -47,25 +44,29 @@ uploaded = st.button("📤 업로드 완료", type="primary")
 
 def load_bank_file(file, label):
     try:
-        if file.name.endswith(".csv"):
-            df = pd.read_csv(file, skiprows=0)
+        ext = file.name.split('.')[-1].lower()
+        if ext == "csv":
+            df = pd.read_csv(file, dtype=str)
         else:
-            df = pd.read_excel(file, skiprows=6)
+            df = pd.read_excel(file, skiprows=6, engine="openpyxl", dtype=str)
 
         df.columns = df.columns.str.strip()
 
         required_cols = ['거래일자', '거래처명', '입금액']
-        for col in required_cols:
-            if col not in df.columns:
-                st.warning(f"[{label}] 파일에 '{col}' 열이 없습니다. 첫 5개 열: {list(df.columns[:5])}")
-                return pd.DataFrame()
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            st.warning(f"[{label}] 파일에 다음 필수 열이 없습니다: {missing_cols}. 첫 5개 열: {list(df.columns[:5])}")
+            return pd.DataFrame()
 
+        df = df[required_cols].copy()
         df['계좌구분'] = label
         df['거래일자'] = pd.to_datetime(df['거래일자'], errors='coerce')
+        df['입금액'] = pd.to_numeric(df['입금액'], errors='coerce')
         return df
     except Exception as e:
         st.error(f"{label} 통장 불러오기 오류: {e}")
         return pd.DataFrame()
+
 
 
 def load_invoice_data(file, label):
