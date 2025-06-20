@@ -64,6 +64,20 @@ def load_bank_file(file, label):
         st.error(f"{label} 통장 불러오기 오류: {e}")
         return pd.DataFrame()
 
+def load_invoice_data(file, label):
+    try:
+        xl = pd.ExcelFile(file)
+        for i in range(5, 20):
+            df = pd.read_excel(xl, sheet_name="세금계산서", header=i)
+            if "작성일자" in df.columns and "공급가액" in df.columns and "상호.1" in df.columns:
+                df = df[["작성일자", "공급자사업자등록번호", "상호", "대표자명", "공급받는자사업자등록번호", "상호.1", "공급가액", "세액", "합계금액"]].copy()
+                df.columns = ["작성일자", "공급자사업자등록번호", "공급자 상호", "공급자 대표자명", "공급받는자사업자등록번호", "공급받는자 상호", "공급가액", "세액", "합계금액"]
+                df["구분"] = label
+                return df
+    except Exception as e:
+        st.warning(f"{label} 세금계산서 불러오기 실패: {e}")
+    return pd.DataFrame()
+
 if uploaded and ((sell_file or buy_file) and (bank_biz_file or bank_tg_file)):
     sell_df = load_invoice_data(sell_file, "매출") if sell_file else pd.DataFrame()
     buy_df = load_invoice_data(buy_file, "매입") if buy_file else pd.DataFrame()
