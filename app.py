@@ -45,28 +45,20 @@ bank_tg_file = st.sidebar.file_uploader("🏛️ 기보 통장 거래내역 업�
 
 uploaded = st.button("📤 업로드 완료", type="primary")
 
-def load_invoice_data(file, label):
-    try:
-        xl = pd.ExcelFile(file)
-        for i in range(5, 20):
-            df = pd.read_excel(xl, sheet_name="세금계산서", header=i)
-            if "작성일자" in df.columns and "공급가액" in df.columns and "상호.1" in df.columns:
-                df = df[["작성일자", "공급자사업자등록번호", "상호", "대표자명", "공급받는자사업자등록번호", "상호.1", "공급가액", "세액", "합계금액"]].copy()
-                df.columns = ["작성일자", "공급자사업자등록번호", "공급자 상호", "공급자 대표자명", "공급받는자사업자등록번호", "공급받는자 상호", "공급가액", "세액", "합계금액"]
-                df["구분"] = label
-                return df
-    except Exception as e:
-        st.warning(f"{label} 세금계산서 불러오기 실패: {e}")
-    return pd.DataFrame()
-
 def load_bank_file(file, label):
     try:
         if file.name.endswith(".csv"):
             df = pd.read_csv(file)
         else:
             df = pd.read_excel(file)
-        df["계좌구분"] = label
-        df["거래일자"] = pd.to_datetime(df["거래일자"], errors="coerce")
+
+        df.columns = df.columns.str.strip()  # 공백 제거
+        if '거래일자' not in df.columns:
+            st.warning(f"[{label}] 파일에 '거래일자' 열이 없습니다. 첫 5개 열: {list(df.columns[:5])}")
+            return pd.DataFrame()
+
+        df['계좌구분'] = label
+        df['거래일자'] = pd.to_datetime(df['거래일자'], errors='coerce')
         return df
     except Exception as e:
         st.error(f"{label} 통장 불러오기 오류: {e}")
