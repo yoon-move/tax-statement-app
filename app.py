@@ -48,24 +48,44 @@ def load_bank_file(file, label):
         if ext == "csv":
             df = pd.read_csv(file, dtype=str)
         else:
-            df = pd.read_excel(file, skiprows=6, engine="openpyxl", dtype=str)
+            # '거래일자' 또는 '거래일시' 열이 있는 헤더를 자동 탐지
+            for skip in range(0, 15):
+                df_try = pd.read_excel(file, skiprows=skip, engine="openpyxl", dtype=str)
+                df_try.columns = df_try.columns.str.strip()
+                if '거래일자' in df_try.columns or '거래일시' in df_try.columns:
+                    df = df_try
+                    break
+            else:
+                st.warning(f"[{label}] 파일에 '거래일자' 또는 '거래일시' 열이 포함된 유효한 헤더를 찾을 수 없습니다.")
+                return pd.DataFrame()
 
+        # 컬럼명 매핑
         df.columns = df.columns.str.strip()
+        column_map = {
+            "거래일시": "거래일자",
+            "보낸분/받는분": "거래처명",
+            "입금액(원)": "입금액"
+        }
+        df.rename(columns=column_map, inplace=True)
 
+        # 필수 컬럼 확인
         required_cols = ['거래일자', '거래처명', '입금액']
         missing_cols = [col for col in required_cols if col not in df.columns]
         if missing_cols:
             st.warning(f"[{label}] 파일에 다음 필수 열이 없습니다: {missing_cols}. 첫 5개 열: {list(df.columns[:5])}")
             return pd.DataFrame()
 
+        # 컬럼 정리 및 변환
         df = df[required_cols].copy()
         df['계좌구분'] = label
         df['거래일자'] = pd.to_datetime(df['거래일자'], errors='coerce')
         df['입금액'] = pd.to_numeric(df['입금액'], errors='coerce')
         return df
+
     except Exception as e:
         st.error(f"{label} 통장 불러오기 오류: {e}")
         return pd.DataFrame()
+
 
 
 
