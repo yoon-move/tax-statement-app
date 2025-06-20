@@ -9,7 +9,7 @@ import tempfile
 import os
 import io
 
-st.set_page_config(page_title="세금계산서 & 은행거래 비교", layout="wide")
+st.set_page_config(page_title="세금계산서 & 은행거래 비교", layout="wide", initial_sidebar_state="expanded")
 
 st.title("📊 세금계산서 & 은행 계좌 내역 통합관리")
 st.markdown("세금계산서 CSV와 은행 거래내역 CSV 파일을 업로드하여 거래 일치 여부를 분석합니다.")
@@ -20,6 +20,8 @@ sell_file = st.sidebar.file_uploader("매출 세금계산서 XLSX 업로드", ty
 buy_file = st.sidebar.file_uploader("매입 세금계산서 XLSX 업로드", type=["xlsx"])
 bank_biz_file = st.sidebar.file_uploader("사업자통장 거래내역 XLS 또는 CSV 업로드", type=["xls", "xlsx", "csv"])
 bank_tg_file = st.sidebar.file_uploader("기보통장 거래내역 XLS 또는 CSV 업로드", type=["xls", "xlsx", "csv"])
+
+uploaded = st.button("📤 업로드 완료", type="primary")
 
 def load_invoice_data(file, label):
     try:
@@ -49,9 +51,9 @@ def load_bank_file(file, label):
         st.error(f"{label} 통장을 불러오는 중 오류 발생: {e}")
         return pd.DataFrame()
 
-if sell_file and buy_file and bank_biz_file and bank_tg_file:
-    sell_df = load_invoice_data(sell_file, "매출")
-    buy_df = load_invoice_data(buy_file, "매입")
+if uploaded and ((sell_file or buy_file) and (bank_biz_file or bank_tg_file)):
+    sell_df = load_invoice_data(sell_file, "매출") if sell_file else pd.DataFrame()
+    buy_df = load_invoice_data(buy_file, "매입") if buy_file else pd.DataFrame()
     invoice_df = pd.concat([sell_df, buy_df], ignore_index=True)
 
     # --- 내부거래 필터링 ---
@@ -67,8 +69,8 @@ if sell_file and buy_file and bank_biz_file and bank_tg_file:
     invoice_df['작성일자'] = pd.to_datetime(invoice_df['작성일자'], errors='coerce')
 
     # --- 은행 파일 통합 로딩 ---
-    bank_biz_df = load_bank_file(bank_biz_file, "사업자통장")
-    bank_tg_df = load_bank_file(bank_tg_file, "기보통장")
+    bank_biz_df = load_bank_file(bank_biz_file, "사업자통장") if bank_biz_file else pd.DataFrame()
+    bank_tg_df = load_bank_file(bank_tg_file, "기보통장") if bank_tg_file else pd.DataFrame()
     bank_df = pd.concat([bank_biz_df, bank_tg_df], ignore_index=True)
 
     # --- 일치 여부 판별 ---
@@ -131,4 +133,4 @@ if sell_file and buy_file and bank_biz_file and bank_tg_file:
     )
 
 else:
-    st.info("왼쪽 사이드바에서 매입, 매출, 그리고 두 종류의 은행 거래내역 파일을 모두 업로드해주세요.")
+    st.info("왼쪽 사이드바에서 매입 또는 매출 중 하나와 은행 거래내역 파일 중 하나를 업로드한 후 '📤 업로드 완료' 버튼을 눌러주세요.")
