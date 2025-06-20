@@ -6,15 +6,23 @@ import io
 
 st.set_page_config(page_title="세금계산서 & 은행거래 비교", layout="wide", initial_sidebar_state="expanded")
 
+# 🔶 사용자 인터페이스 스타일
 st.markdown("""
     <style>
+    .stFileUploader > label {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+    }
     .stFileUploader > label div:first-child {
         background-color: #fff3e0;
         border: 1px dashed #ff9800;
-        padding: 12px;
-        transition: background-color 0.3s;
+        padding: 16px;
+        margin-top: 4px;
         color: black !important;
         font-weight: 500;
+        text-align: center;
+        transition: background-color 0.3s;
     }
     .stFileUploader > label div:first-child:hover {
         background-color: #ffe0b2 !important;
@@ -31,7 +39,7 @@ st.markdown("""
 st.title("📊 세금계산서 & 은행 계좌 내역 통합관리")
 st.markdown("세금계산서와 은행 거래내역 파일을 업로드하여 거래 일치 여부를 분석합니다.")
 
-# 파일 업로드
+# 🔄 파일 업로드
 st.sidebar.header("📂 파일 업로드")
 sell_file = st.sidebar.file_uploader("💼 매출 세금계산서 업로드 (엑셀 파일 .xlsx)", type=["xlsx"])
 buy_file = st.sidebar.file_uploader("🧾 매입 세금계산서 업로드 (엑셀 파일 .xlsx)", type=["xlsx"])
@@ -40,7 +48,7 @@ bank_tg_file = st.sidebar.file_uploader("🏛️ 기보 통장 거래내역 업�
 
 uploaded = st.button("📤 업로드 완료", type="primary")
 
-# 통장 불러오기
+# 📥 통장 불러오기
 def load_bank_file(file, label):
     try:
         ext = file.name.split('.')[-1].lower()
@@ -85,7 +93,7 @@ def load_bank_file(file, label):
         st.error(f"{label} 통장 불러오기 오류: {e}")
         return pd.DataFrame()
 
-# 세금계산서 불러오기
+# 🧾 세금계산서 불러오기
 def fast_load_invoice(file, label):
     try:
         xl = pd.ExcelFile(file)
@@ -102,7 +110,7 @@ def fast_load_invoice(file, label):
         st.warning(f"{label} 세금계산서 불러오기 실패: {e}")
     return pd.DataFrame()
 
-# 매칭 함수
+# 🔍 매칭 함수 (상호 + 대표자명 기준 확대)
 def match_rows(inv, bank):
     results = []
     inv = inv.copy()
@@ -111,8 +119,11 @@ def match_rows(inv, bank):
     bank['거래일자'] = pd.to_datetime(bank['거래일자'], errors='coerce')
 
     for _, row in inv.iterrows():
+        candidates = [row.get('공급받는자 상호', ''), row.get('공급자 상호', ''),
+                      row.get('공급받는자 대표자명', ''), row.get('공급자 대표자명', '')]
+
         match = bank[
-            (bank['거래처명'] == row['공급받는자 상호']) &
+            (bank['거래처명'].isin(candidates)) &
             (np.abs((bank['거래일자'] - row['작성일자']).dt.days) <= 1) &
             (bank['거래금액'] == row['합계금액'])
         ]
@@ -120,7 +131,7 @@ def match_rows(inv, bank):
             results.append("✅ 일치")
         else:
             partial = bank[
-                (bank['거래처명'] == row['공급받는자 상호']) &
+                (bank['거래처명'].isin(candidates)) &
                 (np.abs((bank['거래일자'] - row['작성일자']).dt.days) <= 3)
             ]
             if not partial.empty:
@@ -129,12 +140,13 @@ def match_rows(inv, bank):
                 results.append("❌ 미일치")
     return results
 
-# 실행
+# 🚀 실행
 if uploaded and ((sell_file or buy_file) and (bank_biz_file or bank_tg_file)):
     sell_df = fast_load_invoice(sell_file, "매출") if sell_file else pd.DataFrame()
     buy_df = fast_load_invoice(buy_file, "매입") if buy_file else pd.DataFrame()
     invoice_df = pd.concat([sell_df, buy_df], ignore_index=True)
 
+    # 내부 거래 제거
     mask = (
         invoice_df["공급자사업자등록번호"].astype(str).str.contains("447-87-03172", na=False) |
         invoice_df["공급받는자사업자등록번호"].astype(str).str.contains("447-87-03172", na=False) |
@@ -154,7 +166,7 @@ if uploaded and ((sell_file or buy_file) and (bank_biz_file or bank_tg_file)):
     else:
         invoice_df["매칭결과"] = "❌ 미일치"
 
-    # 필터
+    # 🔎 필터
     st.sidebar.header("🔍 검색 필터")
     filter_match = st.sidebar.multiselect("매칭 결과 필터", options=invoice_df["매칭결과"].unique(), default=list(invoice_df["매칭결과"].unique()))
     filter_vendor = st.sidebar.text_input("거래처명 검색")
@@ -181,7 +193,7 @@ if uploaded and ((sell_file or buy_file) and (bank_biz_file or bank_tg_file)):
     else:
         st.warning("📅 '작성일자' 열이 없어 월별 매출 추이를 계산할 수 없습니다.")
 
-    # 다운로드
+    # 📤 다운로드
     csv = filtered_df.to_csv(index=False).encode("utf-8-sig")
     st.download_button("📥 결과 CSV 다운로드", data=csv, file_name="매칭결과.csv", mime="text/csv")
 
@@ -189,6 +201,5 @@ if uploaded and ((sell_file or buy_file) and (bank_biz_file or bank_tg_file)):
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         filtered_df.to_excel(writer, index=False, sheet_name="매칭결과")
     st.download_button("📥 결과 Excel 다운로드", data=output.getvalue(), file_name="매칭결과.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
 else:
     st.info("왼쪽 사이드바에서 세금계산서와 통장 거래내역 중 최소 1개씩 업로드한 후 '📤 업로드 완료' 버튼을 눌러주세요.")
