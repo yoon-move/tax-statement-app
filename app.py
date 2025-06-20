@@ -48,14 +48,17 @@ uploaded = st.button("📤 업로드 완료", type="primary")
 def load_bank_file(file, label):
     try:
         if file.name.endswith(".csv"):
-            df = pd.read_csv(file)
+            df = pd.read_csv(file, skiprows=0)
         else:
-            df = pd.read_excel(file)
+            df = pd.read_excel(file, skiprows=6)
 
-        df.columns = df.columns.str.strip()  # 공백 제거
-        if '거래일자' not in df.columns:
-            st.warning(f"[{label}] 파일에 '거래일자' 열이 없습니다. 첫 5개 열: {list(df.columns[:5])}")
-            return pd.DataFrame()
+        df.columns = df.columns.str.strip()
+
+        required_cols = ['거래일자', '거래처명', '입금액']
+        for col in required_cols:
+            if col not in df.columns:
+                st.warning(f"[{label}] 파일에 '{col}' 열이 없습니다. 첫 5개 열: {list(df.columns[:5])}")
+                return pd.DataFrame()
 
         df['계좌구분'] = label
         df['거래일자'] = pd.to_datetime(df['거래일자'], errors='coerce')
@@ -63,6 +66,7 @@ def load_bank_file(file, label):
     except Exception as e:
         st.error(f"{label} 통장 불러오기 오류: {e}")
         return pd.DataFrame()
+
 
 def load_invoice_data(file, label):
     try:
