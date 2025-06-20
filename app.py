@@ -18,9 +18,17 @@ st.markdown("""
         border: 1px dashed #ff9800;
         padding: 12px;
         transition: background-color 0.3s;
+        color: black !important;
+        font-weight: 500;
     }
     .stFileUploader > label div:first-child:hover {
         background-color: #ffe0b2 !important;
+    }
+    .stFileUploader .uploadedFileName {
+        color: black !important;
+    }
+    .stFileUploader input[type="file"]::file-selector-button {
+        color: black;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -30,10 +38,10 @@ st.markdown("세금계산서와 은행 거래내역 파일을 업로드하여 �
 
 # --- 파일 업로드 ---
 st.sidebar.header("📂 파일 업로드")
-sell_file = st.sidebar.file_uploader("💼 매출 세금계산서 업로드 (XLSX)", type=["xlsx"])
-buy_file = st.sidebar.file_uploader("🧾 매입 세금계산서 업로드 (XLSX)", type=["xlsx"])
-bank_biz_file = st.sidebar.file_uploader("🏦 사업자통장 거래내역 업로드 (XLS, XLSX, CSV)", type=["xls", "xlsx", "csv"])
-bank_tg_file = st.sidebar.file_uploader("🏛️ 기보통장 거래내역 업로드 (XLS, XLSX, CSV)", type=["xls", "xlsx", "csv"])
+sell_file = st.sidebar.file_uploader("💼 매출 세금계산서 업로드 (엑셀 파일 .xlsx)", type=["xlsx"])
+buy_file = st.sidebar.file_uploader("🧾 매입 세금계산서 업로드 (엑셀 파일 .xlsx)", type=["xlsx"])
+bank_biz_file = st.sidebar.file_uploader("🏦 사업자 통장 거래내역 업로드 (.xls, .xlsx, .csv)", type=["xls", "xlsx", "csv"])
+bank_tg_file = st.sidebar.file_uploader("🏛️ 기보 통장 거래내역 업로드 (.xls, .xlsx, .csv)", type=["xls", "xlsx", "csv"])
 
 uploaded = st.button("📤 업로드 완료", type="primary")
 
@@ -42,12 +50,11 @@ def load_invoice_data(file, label):
         xl = pd.ExcelFile(file)
         for i in range(5, 20):
             df = pd.read_excel(xl, sheet_name="세금계산서", header=i)
-            if "작성일자" in df.columns and "공급가액" in df.columns:
-                if "상호.1" in df.columns:
-                    df = df[["작성일자", "공급자사업자등록번호", "상호", "대표자명", "공급받는자사업자등록번호", "상호.1", "공급가액", "세액", "합계금액"]].copy()
-                    df.columns = ["작성일자", "공급자사업자등록번호", "공급자 상호", "공급자 대표자명", "공급받는자사업자등록번호", "공급받는자 상호", "공급가액", "세액", "합계금액"]
-                    df["구분"] = label
-                    return df
+            if "작성일자" in df.columns and "공급가액" in df.columns and "상호.1" in df.columns:
+                df = df[["작성일자", "공급자사업자등록번호", "상호", "대표자명", "공급받는자사업자등록번호", "상호.1", "공급가액", "세액", "합계금액"]].copy()
+                df.columns = ["작성일자", "공급자사업자등록번호", "공급자 상호", "공급자 대표자명", "공급받는자사업자등록번호", "공급받는자 상호", "공급가액", "세액", "합계금액"]
+                df["구분"] = label
+                return df
     except Exception as e:
         st.warning(f"{label} 세금계산서 불러오기 실패: {e}")
     return pd.DataFrame()
@@ -87,7 +94,7 @@ if uploaded and ((sell_file or buy_file) and (bank_biz_file or bank_tg_file)):
 
     def match_rows(inv, bank):
         results = []
-        for i, row in inv.iterrows():
+        for _, row in inv.iterrows():
             matched = bank[
                 (bank["거래처명"] == row["공급받는자 상호"]) &
                 (np.abs((bank["거래일자"] - row["작성일자"]).dt.days) <= 1) &
